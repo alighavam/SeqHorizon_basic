@@ -1,0 +1,26 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# --- Virtual environment ---
+.venv/
+venv/
+
+# --- macOS ---
+.DS_Store
+
+# --- Experiment tracking ---
+wandb/
+
+# --- Training outputs ---
+# Run artifacts are regenerable from the code + configs, so keep them out of
+# history. The headline figures and the ablation summary are the exception.
+1D/runs/**
+!1D/runs/fig6_ablations.png
+!1D/runs/fig7_training_curves.png
+!1D/runs/ablation_summary.json
+
+# --- Local Claude Code settings ---
+.claude/settings.local.json

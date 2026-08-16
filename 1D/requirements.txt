@@ -1,0 +1,12 @@
+# Python 3.11.  torch 2.2.2 is the last release with macOS x86_64 wheels; on Apple
+# Silicon or Linux any recent torch works.
+torch==2.2.2
+numpy<2
+gymnasium>=0.29,<1.1
+scipy
+pandas>=2.0,<2.3  # experiment dataframes (seqreach/dataset.py)
+matplotlib
+pillow  # GIF encoding for seqreach/video.py (matplotlib pulls it in anyway)
+pyyaml
+pytest
+wandb>=0.16  # optional: everything still runs without it, tracking just turns itself off

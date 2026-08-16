@@ -1,0 +1,92 @@
+[
+  {
+    "name": "baseline",
+    "tests": "full task",
+    "ci": 0.5485441448609973,
+    "ci_se": 0.05877126568396883,
+    "ci_p": 6.618218282955346e-11,
+    "ci_control": -2.1602942534931116e-32,
+    "success_rate": 0.970703125,
+    "hit_fraction": 0.9791666666666667
+  },
+  {
+    "name": "no_preview",
+    "tests": "C6: future targets never visible -- removes the information",
+    "ci": NaN,
+    "ci_se": NaN,
+    "ci_p": NaN,
+    "ci_control": 2.1602942534931116e-32,
+    "success_rate": 0.490234375,
+    "hit_fraction": 0.8300781249999999
+  },
+  {
+    "name": "stop_at_targets",
+    "tests": "C1: must come to rest at each target -- makes the problem separable",
+    "ci": -0.6421586208182556,
+    "ci_se": 0.04039223510588448,
+    "ci_p": 3.1849382703657735e-11,
+    "ci_control": 0.0,
+    "success_rate": 0.193359375,
+    "hit_fraction": 0.259765625
+  },
+  {
+    "name": "no_effort",
+    "tests": "C2: no effort cost -- arrival velocity stops being worth optimising",
+    "ci": 0.41668740241488966,
+    "ci_se": 0.036461095933553005,
+    "ci_p": 3.433603867851159e-13,
+    "ci_control": -2.1602942534931116e-32,
+    "success_rate": 0.994140625,
+    "hit_fraction": 0.994140625
+  },
+  {
+    "name": "with_jumps",
+    "tests": "trains on target jumps -- for the online-replanning comparison",
+    "ci": 0.026587243959359717,
+    "ci_se": 0.03016124077046373,
+    "ci_p": 0.38423470626392836,
+    "ci_control": 2.1602942534931116e-32,
+    "success_rate": 0.224609375,
+    "hit_fraction": 0.6227213541666666
+  },
+  {
+    "name": "no_shaping",
+    "tests": "robustness: sparse reward only, no potential-based shaping",
+    "ci": 0.16014116681729754,
+    "ci_se": 0.047494669751422657,
+    "ci_p": 0.0018749342687964462,
+    "ci_control": 0.0,
+    "success_rate": 0.2265625,
+    "hit_fraction": 0.626953125
+  },
+  {
+    "name": "gamma097_sparse",
+    "tests": "C7 (matched): gamma=0.97 -- one reach fits the horizon, the next does not",
+    "ci": 0.03995120847849649,
+    "ci_se": 0.012084851530973379,
+    "ci_p": 0.0022403070101411978,
+    "ci_control": -4.320588506986223e-32,
+    "success_rate": 0.224609375,
+    "hit_fraction": 0.6207682291666666
+  },
+  {
+    "name": "myopic_sparse",
+    "tests": "C7 (matched): gamma=0.90, sparse reward",
+    "ci": 0.045751346499543745,
+    "ci_se": 0.01568426310678531,
+    "ci_p": 0.006220377397047718,
+    "ci_control": 0.0,
+    "success_rate": 0.0078125,
+    "hit_fraction": 0.40266927083333326
+  },
+  {
+    "name": "myopic",
+    "tests": "C7: discount horizon (~10 steps) shorter than a reach -- removes the incentive",
+    "ci": -0.015463586515402356,
+    "ci_se": 0.0008138730040250296,
+    "ci_p": 2.107081663165221e-12,
+    "ci_control": 0.0,
+    "success_rate": 0.0,
+    "hit_fraction": 0.24251302083333334
+  }
+]
