@@ -7,14 +7,21 @@ for*. Nothing in the reward mentions trajectories, velocity profiles, reaction t
 preparatory states — the agent is only told to hit the targets in order, cheaply and
 quickly.
 
-See [`doc/1D_sequential_reach.md`](../doc/1D_sequential_reach.md) for the full write-up:
-the separability argument, the experimental design, and results.
+Two documents cover this stage:
+[`doc/1D_task_and_design.md`](../doc/1D_task_and_design.md) — the separability argument,
+the task, the maths behind the discount and the shaping term, and the definition of every
+measurement; and [`doc/1D_results.md`](../doc/1D_results.md) — every measured result, with
+seed counts and the checks that license reading it.
 
 ## Install
 
+The environment is a conda prefix at the repo root, `.conda/` (gitignored):
+
 ```bash
-python3.11 -m venv .venv && .venv/bin/pip install -r 1D/requirements.txt
+conda create -p .conda python=3.11 && .conda/bin/pip install -r 1D/requirements.txt
 ```
+
+Commands below write `python` for `.conda/bin/python` (or `conda activate ./.conda`).
 
 ## Use
 
@@ -39,13 +46,16 @@ python 1D/scripts/make_video.py --run 1D/runs/baseline_s1
 Train and compare the ablation grid:
 
 ```bash
-python 1D/scripts/run_ablations.py --timesteps 3000000 --parallel 6 --threads 1
+python 1D/scripts/run_ablations.py --timesteps 3000000 --parallel 6 --threads 1 --no-video --seed 1
 ```
+
+The arms are registered in `ABLATIONS` at the top of `scripts/run_ablations.py`. Run it
+once per seed; one seed is not a result.
 
 Any config field can be overridden from the CLI with dotted keys:
 
 ```bash
-python 1D/scripts/train.py --name myopic --set ppo.gamma=0.90 task.dwell_inter=25
+python 1D/scripts/train.py --name gamma097_sparse --set ppo.gamma=0.97 reward.shaping=none
 ```
 
 Tests:
@@ -62,14 +72,16 @@ python -m pytest 1D/tests -q
 | `seqreach/env.py` | batched numpy env (`BatchedSeqReach1D`) + Gymnasium adapter |
 | `seqreach/networks.py` | GRU / MLP actor-critic, CleanRL init |
 | `seqreach/ppo.py` | PPO trainer |
-| `seqreach/probes.py` | preview / delay / jump protocols, trajectory recording |
+| `seqreach/probes.py` | preview / delay / jump protocols, trajectory recording, competence gate |
 | `seqreach/metrics.py` | co-articulation index, RT, jump latency, preparatory geometry |
+| `seqreach/experiments.py` | registry of test experiments (trial lists) run on frozen agents |
+| `seqreach/dataset.py` | rollout → timeseries / trial dataframes for export |
 | `seqreach/plots.py` | figures |
 | `seqreach/video.py` | animated GIF of a rollout (training and test time) |
 | `seqreach/tracking.py` | Weights & Biases facade; inert when disabled |
-| `scripts/` | `train.py`, `analyze.py`, `run_ablations.py`, `make_video.py`, `wandb_sync.py` |
-| `configs/base.yaml` | dump of the default config |
-| `runs/` | checkpoints, logs, `videos/`, `analysis/` figures (created on first run) |
+| `scripts/` | `train.py`, `analyze.py`, `run_ablations.py`, `run_experiment.py`, `make_video.py`, `wandb_sync.py` |
+| `notebooks/train_model.ipynb` | walkthrough of config → env → reward → agent → training → probes |
+| `runs/` | checkpoints, logs, `videos/`, `analysis/` figures (gitignored; checkpoints are on W&B) |
 
 ## Video
 
@@ -92,7 +104,7 @@ cumulative return, and the full plant/task/reward/PPO parameters are on every fr
 
 ```bash
 python 1D/scripts/make_video.py --run 1D/runs/baseline_s1                # task trials
-python 1D/scripts/make_video.py --run 1D/runs/with_jumps_s1 --probe jump # replanning
+python 1D/scripts/make_video.py --run 1D/runs/baseline_s1 --probe jump   # replanning
 python 1D/scripts/make_video.py --run 1D/runs/baseline_s1 --noisy --stochastic
 ```
 
@@ -137,7 +149,7 @@ python 1D/scripts/wandb_sync.py --all --group backfill
 The whole ablation grid as one group:
 
 ```bash
-python 1D/scripts/run_ablations.py --timesteps 3000000 --parallel 6 --wandb
+python 1D/scripts/run_ablations.py --timesteps 3000000 --parallel 6 --threads 1 --no-video --wandb
 ```
 
 ## Notes on the implementation
@@ -156,10 +168,11 @@ recurrent update from `ppo_atari_lstm.py`. Two deliberate departures:
 
 **Shaping.** `reward.shaping="pbrs"` adds potential-based shaping
 (`F = γΦ(s') − Φ(s)`, `Φ = −c·|x − x_current|`) as a learning aid only; it is
-policy-invariant. A naive `−c·|x − x_current|` bonus is deliberately *not* offered,
-because a greedy pull toward the current target is implicit supervision of exactly the
-effect under study. The `no_shaping` ablation confirms the headline result survives with
-sparse reward alone.
+policy-invariant. `reward.shaping="greedy"` is the naive `−c·|x − x_current|` cost; it is
+*not* policy-invariant — a pull toward the current target is implicit supervision of
+exactly the effect under study — so it exists only as an ablation arm, to measure that
+confound. The `no_shaping` arm confirms the headline result survives with sparse reward
+alone.
 
 **Probes are noiseless by default** (`sigma_sdn=0`) so a deterministic policy yields
 exactly reproducible trajectories. Re-run `analyze.py --noisy` to confirm effects

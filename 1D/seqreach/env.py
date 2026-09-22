@@ -333,6 +333,11 @@ class BatchedSeqReach1D:
         cur_t = np.take_along_axis(self.targets, self.cur[:, None].clip(0, self.K - 1),
                                    axis=1)[:, 0]
         inside = (np.abs(self.x - cur_t) <= t.tolerance) & post_go
+        if r.shaping == "greedy":
+            # Naive distance cost: a direct pull toward the target being reached for
+            # right now.  Deliberately not policy-invariant -- see RewardConfig.
+            rew -= (r.shaping_coef * np.abs(self.x - cur_t) * p.dt
+                    * (post_go & (self.cur < self.n_targets)))
         self.dwell = np.where(inside, self.dwell + 1, 0)
         is_last = self.cur == (self.n_targets - 1)
         need = np.where(is_last, t.dwell_final, t.dwell_inter)

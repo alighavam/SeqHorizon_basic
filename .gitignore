@@ -7,6 +7,7 @@ __pycache__/
 # --- Virtual environment ---
 .venv/
 venv/
+.conda/
 
 # --- macOS ---
 .DS_Store
@@ -15,12 +16,9 @@ venv/
 wandb/
 
 # --- Training outputs ---
-# Run artifacts are regenerable from the code + configs, so keep them out of
-# history. The headline figures and the ablation summary are the exception.
-1D/runs/**
-!1D/runs/fig6_ablations.png
-!1D/runs/fig7_training_curves.png
-!1D/runs/ablation_summary.json
+# Run artifacts are regenerable from the code + configs, and every checkpoint is
+# on W&B as a model artifact, so keep them out of history.
+1D/runs/
 
 # --- Local Claude Code settings ---
 .claude/settings.local.json

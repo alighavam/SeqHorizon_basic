@@ -63,7 +63,7 @@ def main():
     # -- 0. competence on the training distribution ---------------------------
     # This gates everything below it.  Each behavioural index describes the shape of a
     # movement the agent is making; if it is not making the movement, the index is not
-    # measuring the thing it is named after.  See doc/1D_sequential_reach.md §6.5 for the
+    # measuring the thing it is named after.  See doc/1D_results.md §2 for the
     # case that forced this -- an arm whose CI reversed sign once it learned the task.
     rand = probes.rollout(agent, obs_rms, pcfg, {}, n_trials=512, seed=123)
     outcome = probes.outcome_breakdown(rand, floor=args.competence_floor)
@@ -78,10 +78,23 @@ def main():
           f"timeout {outcome['timeout_rate']:.2f}  "
           f"wall contact {outcome['wall_contact_rate']:.2f} "
           f"({outcome['mean_wall_steps']:.0f} steps/episode)")
+    # Budget guard.  The competence floor says *that* a run failed; this says *why*.
+    # A max_steps that truncates the exploratory trajectories learning has to pass
+    # through makes runs fail by timeout -- a setup fault, not an ablation effect, and
+    # one that still produces significant-looking indices.  A run dominated by
+    # timeouts should be re-run with a larger budget, not interpreted.
+    failure_rate = 1.0 - outcome["success_rate"]
+    budget_limited = bool(not competent and failure_rate > 0
+                          and outcome["timeout_rate"] / failure_rate > 0.5)
+    results["budget_limited"] = budget_limited
     if not competent:
         print(f"  !! NOT COMPETENT (success {outcome['success_rate']:.2f} < floor "
               f"{args.competence_floor:.2f}).  Indices below are recorded but must not "
               f"be interpreted as measurements of lookahead.")
+        if budget_limited:
+            print(f"     !! BUDGET-LIMITED: {outcome['timeout_rate'] / failure_rate:.0%} "
+                  f"of failures are timeouts (task.max_steps={pcfg.task.max_steps}). "
+                  f"Raise the budget and re-run -- this is a setup fault, not a result.")
         if outcome["success_multi_target"] < 0.05 <= outcome["success_rate"]:
             print("     signature: solves single-target trials, fails every multi-target "
                   "one -- a single-reach policy, so there is no second movement to plan.")
@@ -102,13 +115,27 @@ def main():
         "dur_slope": co["preview_on"]["dur_slope"],
         "dur_p": co["preview_on"]["dur_p"],
     }
+    # Sign-agnostic companion: does T2 change the reach at all?  Reported next to CI
+    # because a signed slope is only meaningful when the two reach directions agree.
+    td = metrics.t2_dependence_by_preview(traj, design, tol=pcfg.task.tolerance)
+    results["coarticulation"]["t2_spread_rms"] = td["preview_on"]["spread_rms"]
+    results["coarticulation"]["t2_spread_peak"] = td["preview_on"]["spread_peak"]
+    results["coarticulation"]["t2_spread_rms_tol"] = td["preview_on"]["spread_rms_tol"]
+    results["coarticulation"]["t2_spread_control"] = td["preview_off"]["spread_rms"]
+    results["coarticulation"]["t2_v_spread_rms"] = td["preview_on"]["v_spread_rms"]
+    results["coarticulation"]["t2_v_spread_peak"] = td["preview_on"]["v_spread_peak"]
+    results["coarticulation"]["t2_v_spread_control"] = td["preview_off"]["v_spread_rms"]
+    results["coarticulation"]["by_group"] = co["preview_on"]["by_group"]
+    results["coarticulation"]["ci_balanced"] = co["preview_on"]["ci_balanced"]
+    results["coarticulation"]["ci_balanced_se"] = co["preview_on"]["ci_balanced_se"]
+    results["coarticulation"]["n_balanced"] = co["preview_on"]["n_balanced"]
+    results["coarticulation"]["dir_agree"] = co["preview_on"]["dir_agree"]
     results["ci"] = co["preview_on"]["ci"]
     results["ci_se"] = co["preview_on"]["ci_se"]
     results["ci_interpretable"] = competent
     # The probe fixes T1 and sweeps T2, so every trial should contribute.  A short count
-    # means the policy could not even reach T1 on the rest -- which is how the first
-    # grid's `no_preview` arm produced a NaN index (0 of 36 preview-on trials) and how
-    # two other arms produced indices fit to a single reach direction.
+    # means the policy could not even reach T1 on the rest, so the index is fit to a
+    # biased subset -- possibly a single reach direction, or nothing at all (NaN).
     n_expected = int((design["preview"] == 2).sum())
     results["coarticulation"]["n_expected"] = n_expected
     if co["preview_on"]["n"] < n_expected:
@@ -118,6 +145,19 @@ def main():
           f"± {co['preview_on']['ci_se']:.4f}  p={co['preview_on']['ci_p']:.2e}"
           f"{'' if competent else '   [UNINTERPRETABLE: below competence floor]'}")
     print(f"  CI (T2 hidden)  = {co['preview_off']['ci']:+.4f}   [control]")
+    print(f"  T2 influence on the reach to T1: rms {td['preview_on']['spread_rms']:.4f} "
+          f"({td['preview_on']['spread_rms_tol']:.2f} tol), peak "
+          f"{td['preview_on']['spread_peak']:.4f}  [control {td['preview_off']['spread_rms']:.6f}]")
+    print(f"  T2 influence on velocity: rms {td['preview_on']['v_spread_rms']:.4f}, "
+          f"peak {td['preview_on']['v_spread_peak']:.4f}  "
+          f"[control {td['preview_off']['v_spread_rms']:.6f}]")
+    print(f"  per-direction CI: " + ", ".join(f"{g:+.0f}: {v:+.4f}"
+          for g, v in sorted(co["preview_on"]["by_group"].items())))
+    print(f"  CI (balanced window) = {co['preview_on']['ci_balanced']:+.4f} "
+          f"± {co['preview_on']['ci_balanced_se']:.4f}  on {co['preview_on']['n_balanced']} trials")
+    if not co["preview_on"]["dir_agree"]:
+        print("  !! the two reach directions disagree on the sign of CI -- the pooled "
+              "slope is not a signed effect")
 
     div = metrics.trajectory_divergence(traj, design)
     results["divergence"] = {

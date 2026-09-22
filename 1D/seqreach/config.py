@@ -34,7 +34,7 @@ class PlantConfig:
     # Workspace half-width.  The boundary is *inelastic*: contact zeroes velocity and is
     # charged for (reward.w_wall).  An earlier version clipped position and left velocity
     # untouched and unpenalised, which made "drive into the wall and sit" a free resting
-    # place and trapped most of the ablation grid there.  See doc/1D_sequential_reach.md
+    # place and trapped most of the ablation grid there.  See doc/1D_task_and_design.md
     # §6.6.  Targets live within +-task.target_range = 0.9, so a competent policy never
     # reaches this and the boundary rule cannot affect it.
     x_limit: float = 1.5
@@ -67,7 +67,11 @@ class TaskConfig:
     min_separation: float = 0.15
     start_x: float = 0.0
 
-    max_steps: int = 200  # 4.0 s at dt=0.02
+    # Must clear the *mid-training* trajectory length, not the converged one.  At 200
+    # the cap did not bind for a converged policy (~110 steps) but truncated the longer
+    # exploratory trajectories learning has to pass through: only 1 of 3 baseline seeds
+    # solved the task.  At 600 all seeds solve it.
+    max_steps: int = 600  # 12.0 s at dt=0.02
 
     # Delay period (hold at start until an unpredictable go cue).
     use_delay: bool = True
@@ -123,9 +127,11 @@ class RewardConfig:
 
     # Potential-based shaping, F = gamma*Phi(s') - Phi(s) with Phi = -c*|x - x_current|.
     # Policy-invariant (Ng et al. 1999), used only as a learning aid.  "none" disables it.
-    # A *naive* -c|x - x_cur| bonus would be implicit supervision of the very effect we
-    # study, so it is deliberately not offered.
-    shaping: str = "pbrs"  # "pbrs" | "none"
+    # "greedy" is the *naive* variant: a per-step cost -coef*|x - x_current|*dt paid
+    # directly, not as a potential difference.  It is NOT policy-invariant -- a pull
+    # toward the current target is implicit supervision of the very effect we study --
+    # so it exists only as an ablation, to measure that confound rather than assert it.
+    shaping: str = "pbrs"  # "pbrs" | "none" | "greedy"
     shaping_coef: float = 2.0
 
 

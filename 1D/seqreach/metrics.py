@@ -100,12 +100,34 @@ def co_articulation(traj: dict, design: dict, slot: int = 0,
         out.update(ci=np.nan, ci_se=np.nan, ci_p=np.nan, ci_r=np.nan,
                    peak_slope=np.nan, peak_p=np.nan, dur_slope=np.nan, dur_p=np.nan)
 
+    # Balanced-window refit.  The probe fixes T1 at +-0.45 while T2 sweeps +-0.9, so
+    # d_next spans [-1.35, +0.45]: three quarters of every slope is measured on the
+    # reversing side.  Any curvature is then converted into a spurious *linear* slope
+    # whose sign is set by which arm dominates the sample.  Refitting on the widest
+    # window symmetric about zero costs no extra rollouts and removes that asymmetry;
+    # a large gap between `ci` and `ci_balanced` means the relation is not linear and
+    # the single slope should not be read as a signed effect.
+    d_max = min(dn.max(), -dn.min()) if len(dn) else 0.0
+    bal = np.abs(dn) <= d_max
+    if bal.sum() >= 3 and np.ptp(dn[bal]) > 0:
+        b = _slope(dn[bal], vv[bal])
+        out["ci_balanced"] = b["slope"]
+        out["ci_balanced_se"] = b["se"]
+        out["ci_balanced_p"] = b["p"]
+        out["n_balanced"] = int(bal.sum())
+    else:
+        out.update(ci_balanced=np.nan, ci_balanced_se=np.nan,
+                   ci_balanced_p=np.nan, n_balanced=int(bal.sum()))
+
     # Per-direction slopes, reported alongside because they differ substantially.
     out["by_group"] = {}
     for g in np.unique(groups):
         m = groups == g
         if m.sum() >= 3 and np.ptp(d_next[m]) > 0:
             out["by_group"][float(g)] = _slope(d_next[m], v_out[m])["slope"]
+    # A signed CI is only meaningful if the two reach directions agree on the sign.
+    bg = list(out["by_group"].values())
+    out["dir_agree"] = bool(len(bg) >= 2 and (np.sign(bg[0]) == np.sign(bg[1])))
     return out
 
 
@@ -146,6 +168,69 @@ def co_articulation_by_preview(traj: dict, design: dict) -> dict:
         sub_traj = _subset(traj, m)
         res[name] = co_articulation(sub_traj, sub_design)
     res["delta_ci"] = res["preview_on"]["ci"] - res["preview_off"]["ci"]
+    return res
+
+
+def t2_dependence(traj: dict, design: dict, slot: int = 0,
+                  group: str = "direction", tol: float = 0.05) -> dict:
+    """Sign-agnostic magnitude of T2's influence on the reach to target ``slot``.
+
+    ``co_articulation`` asks *which way* the reach bends with T2, and its sign is only
+    interpretable when the underlying relation is monotonic and consistent across reach
+    directions -- which is not guaranteed (a dwell requirement, or an agent whose two
+    directions disagree, both break it).  This asks the weaker but unambiguous question:
+    does the trajectory to T1 depend on T2 **at all**?
+
+    Within one reach direction the probe trials differ only in T2, so at each timestep
+    the spread of ``x`` across them is exactly the influence of T2.  With T2 hidden the
+    observation is identical across those trials and the spread is *exactly* zero --
+    a hard null, not an estimated one -- so the preview-off value doubles as a pipeline
+    check.
+
+    Measured from the go cue to the earliest first-entry into T1's band, so it describes
+    the reach to T1 only and never the movement toward T2.
+    """
+    k = segment_kinematics(traj, slot)
+    tr = k["trials"]
+    nan = {"spread_rms": np.nan, "spread_peak": np.nan,
+           "spread_rms_tol": np.nan, "spread_peak_tol": np.nan,
+           "v_spread_rms": np.nan, "v_spread_peak": np.nan, "n": len(tr)}
+    if len(tr) < 3:
+        return nan
+    groups = np.asarray(design[group])[tr] if group in design else np.zeros(len(tr))
+    go, entry = traj["go_step"][tr], k["acq_step"]
+
+    rms, peak, vrms, vpeak = [], [], [], []
+    for g in np.unique(groups):
+        m = groups == g
+        if m.sum() < 3:
+            continue
+        g0, g1 = int(np.max(go[m])), int(np.min(entry[m]))
+        if g1 <= g0:
+            continue
+        for key, acc_rms, acc_pk in (("x", rms, peak), ("v", vrms, vpeak)):
+            A = np.stack([traj[key][g0:g1, n] for n in tr[m]], axis=1)
+            sd = A.std(axis=1, ddof=1)
+            acc_rms.append(float(np.sqrt((sd ** 2).mean())))
+            acc_pk.append(float(sd.max()))
+    if not rms:
+        return nan
+    # Position spread is reported in tolerance units; in 1D the path is a line, so most
+    # of the lookahead lives in the velocity profile rather than in where the mass goes.
+    return {"spread_rms": float(np.mean(rms)), "spread_peak": float(np.mean(peak)),
+            "spread_rms_tol": float(np.mean(rms) / tol),
+            "spread_peak_tol": float(np.mean(peak) / tol),
+            "v_spread_rms": float(np.mean(vrms)), "v_spread_peak": float(np.mean(vpeak)),
+            "n": len(tr)}
+
+
+def t2_dependence_by_preview(traj: dict, design: dict, tol: float = 0.05) -> dict:
+    """``t2_dependence`` for preview-on and preview-off trials separately."""
+    res = {}
+    for name, level in (("preview_on", 2), ("preview_off", 1)):
+        m = design["preview"] == level
+        res[name] = t2_dependence(_subset(traj, m),
+                                  {k: v[m] for k, v in design.items()}, tol=tol)
     return res
 
 

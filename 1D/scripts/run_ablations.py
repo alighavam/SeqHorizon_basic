@@ -1,11 +1,11 @@
 #!/usr/bin/env python
 """Train and analyse the ablation grid, then summarise co-articulation across it.
 
-Each entry removes exactly one candidate source of lookahead.  The point is not to
+Each entry changes exactly one thing relative to the baseline.  The point is not to
 show the effect once, but to find which couplings it actually depends on.
 
-    python 1D/scripts/run_ablations.py --timesteps 2000000 --parallel 6
-    python 1D/scripts/run_ablations.py --only no_preview myopic --analyze-only
+    python 1D/scripts/run_ablations.py --timesteps 3000000 --parallel 6 --threads 1 --no-video --wandb
+    python 1D/scripts/run_ablations.py --analyze-only --seed 1
 """
 
 from __future__ import annotations
@@ -26,47 +26,27 @@ ROOT = Path(__file__).resolve().parents[1]
 # name -> (dotted overrides, what it tests)
 ABLATIONS: dict[str, tuple[dict, str]] = {
     "baseline": ({}, "full task"),
-    # `no_preview` (task.fixed_preview=1) was removed on 2026-08-16.  It cannot be
-    # probed: trained with only one target ever visible, the agent is out of
-    # distribution the moment a second one appears and reached T1 on 0 of 36 preview-on
-    # trials.  The only condition it *can* be probed in is preview=1, where CI is
-    # exactly zero by construction for any agent whatsoever -- with T2 absent from the
-    # observation, trajectories are bit-identical across T2.  That measurement already
-    # exists as the baseline's own within-agent preview-off control (`ci_control`), which
-    # is strictly stronger because it holds weights and competence fixed.  See
-    # doc/1D_sequential_reach.md §6.5 (C6).  `task.fixed_preview` remains available as a
-    # config knob; it just is not an ablation arm.
-    "myopic": (
-        {"ppo.gamma": 0.90},
-        "C7: discount horizon (~10 steps) shorter than a reach -- removes the incentive",
-    ),
-    # Matched sparse-reward gamma series.  PBRS contributes (gamma-1)*Phi per step, and
-    # since Phi <= 0 that is a *positive* payment for staying far from the target:
-    # negligible at gamma=0.995, worth ~+20/episode at gamma=0.90.  It stays
-    # policy-invariant, but it is a learning trap that would confound a gamma sweep.
-    # Holding shaping off makes the three points below differ only in gamma; the
-    # gamma=0.995 arm of this series is `no_shaping`.
-    "myopic_sparse": (
-        {"ppo.gamma": 0.90, "reward.shaping": "none"},
-        "C7 (matched): gamma=0.90, sparse reward",
-    ),
+    # C6 (information) has no arm.  An agent trained with only one target visible is out
+    # of distribution the moment a second one appears, so it cannot be probed where it
+    # matters.  The baseline's own preview-off control (`ci_control`) is the within-agent
+    # version, and strictly stronger.  See doc/1D_task_and_design.md §6.
+    #
+    # C7 runs with shaping off.  PBRS contributes (gamma-1)*Phi per step, a positive
+    # payment for staying far from the target that grows as gamma falls; holding shaping
+    # off makes gamma the only difference from `no_shaping` (the gamma=0.995 point).
+    # gamma=0.90 is not an arm: it shrinks the whole learnable signal, not just the
+    # lookahead incentive, and removes the task (design doc §5.2).
     "gamma097_sparse": (
         {"ppo.gamma": 0.97, "reward.shaping": "none"},
-        "C7 (matched): gamma=0.97 -- one reach fits the horizon, the next does not",
+        "C7: discount horizon -- one reach fits the horizon, the next does not",
     ),
-    # The dwell must be paid for in time, or this arm tests two things at once.
-    # dwell_inter=25 adds 24 extra steps of *mandatory holding* at each intermediate
-    # target -- 48 steps on a three-target trial -- out of a 200-step budget that a
-    # near-time-optimal controller already needs 164 of (median; p90 186).  Slack at p90
-    # collapses from baseline's 36% to 7%, and a learned policy is never time-optimal:
-    # measured 0.00 success on three-target trials while the same run reaches 0.94 on
-    # two-target ones.  Giving back exactly the 48 steps the manipulation costs restores
-    # 26% slack, so the arm isolates separability instead of confounding it with a
-    # 24% cut to the movement-time budget.
+    # The dwell must be paid for in time, or this arm tests two things at once.  Forcing
+    # rest costs braking and re-acceleration as well as the dwell itself: the arm needs
+    # ~220 steps converged and ~366 mid-training; a budget sweep found it competent
+    # only at 700.
     "stop_at_targets": (
-        {"task.dwell_inter": 25, "task.max_steps": 250},
-        "C1: must come to rest at each target -- makes the problem separable "
-        "(time budget compensated for the added dwell)",
+        {"task.dwell_inter": 25, "task.max_steps": 700},
+        "C1: must come to rest at each target -- makes the problem separable",
     ),
     "no_effort": (
         {"reward.w_effort": 0.0, "reward.w_rate": 0.0},
@@ -76,10 +56,13 @@ ABLATIONS: dict[str, tuple[dict, str]] = {
         {"reward.shaping": "none"},
         "robustness: sparse reward only, no potential-based shaping",
     ),
-    "with_jumps": (
-        {"task.p_jump": 0.25},
-        "trains on target jumps -- for the online-replanning comparison",
-    ),
+    # Naive (non-policy-invariant) pull toward the current target, as a dose series.
+    # At |x - T| = 0.5 the per-step cost is coef/100: coef 2 equals the time cost, and
+    # at 60 the term exceeds the entire task return.
+    **{f"greedy{c}": (
+        {"reward.shaping": "greedy", "reward.shaping_coef": float(c)},
+        f"confound: naive greedy shaping, coef {c}",
+    ) for c in (2, 6, 20, 60)},
     "mlp": (
         {"agent.recurrent": False},
         "architecture: memoryless policy instead of a GRU",
@@ -93,7 +76,7 @@ def fmt(v) -> str:
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--timesteps", type=int, default=2_000_000)
+    ap.add_argument("--timesteps", type=int, default=3_000_000)
     ap.add_argument("--parallel", type=int, default=4)
     ap.add_argument("--seed", type=int, default=1)
     ap.add_argument("--threads", type=int, default=1)
@@ -175,7 +158,16 @@ def main():
             "ci": co.get("ci"),
             "ci_se": co.get("ci_se"),
             "ci_p": co.get("ci_p"),
+            "ci_r": co.get("ci_r"),
             "ci_control": co.get("ci_control"),
+            # A signed slope means nothing unless the relation is linear and the two
+            # reach directions agree; these carry that check into the summary table.
+            "ci_balanced": co.get("ci_balanced"),
+            "dir_agree": co.get("dir_agree"),
+            "by_group": co.get("by_group"),
+            "t2_spread_rms": co.get("t2_spread_rms"),
+            "t2_v_spread_rms": co.get("t2_v_spread_rms"),
+            "budget_limited": res.get("budget_limited"),
             "success_rate": res.get("success_rate"),
             "hit_fraction": res.get("hit_fraction"),
             # Carried through so the summary can never present a CI without the
@@ -199,15 +191,18 @@ def main():
     ok = [r for r in rows if r.get("competent")]
     bad = [r for r in rows if not r.get("competent")]
 
-    hdr = (f"{'condition':<17}{'CI':>10}{'±se':>9}{'control':>10}{'succ':>7}"
-           f"{'multi':>7}{'wall':>6}  tests")
+    hdr = (f"{'condition':<17}{'CI':>10}{'±se':>9}{'r':>7}{'bal':>9}{'dir':>5}"
+           f"{'|T2|v':>8}{'succ':>7}{'multi':>7}  tests")
     print("\n" + hdr)
     print("-" * len(hdr))
+    def row(r):
+        return (f"{r['name']:<17}{fmt(r['ci']):>10}{fmt(r['ci_se']):>9}"
+                f"{fmt(r.get('ci_r')):>7}{fmt(r.get('ci_balanced')):>9}"
+                f"{('ok' if r.get('dir_agree') else 'XX'):>5}"
+                f"{fmt(r.get('t2_v_spread_rms')):>8}{fmt(r['success_rate']):>7}"
+                f"{fmt(r['success_multi_target']):>7}  {r['tests']}")
     for r in ok:
-        print(f"{r['name']:<17}{fmt(r['ci']):>10}{fmt(r['ci_se']):>9}"
-              f"{fmt(r['ci_control']):>10}{fmt(r['success_rate']):>7}"
-              f"{fmt(r['success_multi_target']):>7}{fmt(r['wall_contact_rate']):>6}"
-              f"  {r['tests']}")
+        print(row(r))
     if bad:
         print("-" * len(hdr))
         print("BELOW COMPETENCE FLOOR -- diagnostics only, do not read the CI column:")
@@ -216,11 +211,14 @@ def main():
             if r.get("n_on") is not None and r.get("n_expected"):
                 if r["n_on"] < r["n_expected"]:
                     note = f"  [probe attrition {r['n_on']}/{r['n_expected']}]"
-            print(f"{r['name']:<17}{fmt(r['ci']):>10}{fmt(r['ci_se']):>9}"
-                  f"{fmt(r['ci_control']):>10}{fmt(r['success_rate']):>7}"
-                  f"{fmt(r['success_multi_target']):>7}{fmt(r['wall_contact_rate']):>6}"
-                  f"  {r['tests']}{note}")
-        print("\n'multi' is success on multi-target trials only.  An arm near 1.00 "
+            if r.get("budget_limited"):
+                note += "  [BUDGET-LIMITED: failures are timeouts]"
+            print(row(r) + note)
+        print("\n'r' is the CI regression's correlation, 'bal' the refit on a d_next window\n"
+              "symmetric about zero, 'dir' whether the two reach directions agree on the\n"
+              "sign, '|T2|v' the sign-agnostic velocity spread induced by T2.  A CI with\n"
+              "dir=XX or |bal - CI| large is not a signed effect.\n")
+    print("'multi' is success on multi-target trials only.  An arm near 1.00 "
               "overall\nsuccess on single targets and 0.00 here has learned one reach, "
               "not the task.")
     print(f"\n[ablations] wrote {out} and fig6_ablations.png")

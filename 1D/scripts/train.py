@@ -2,8 +2,8 @@
 """Train a PPO agent on SeqReach1D.
 
     python 1D/scripts/train.py --name baseline
-    python 1D/scripts/train.py --name myopic --set ppo.gamma=0.90
-    python 1D/scripts/train.py --config 1D/configs/base.yaml --set task.dwell_inter=25
+    python 1D/scripts/train.py --name gamma097_sparse --set ppo.gamma=0.97 reward.shaping=none
+    python 1D/scripts/train.py --config 1D/runs/baseline_s1/config.yaml --set task.dwell_inter=25
 
 With Weights & Biases tracking (metrics, losses, and rollout GIFs during training):
 
@@ -29,7 +29,6 @@ def parse_value(s: str):
         return ast.literal_eval(s)
     except (ValueError, SyntaxError):
         return s
-
 
 def build_config(args) -> Config:
     cfg = Config.load(args.config) if args.config else Config()
@@ -59,7 +58,6 @@ def build_config(args) -> Config:
     cfg = cfg.override(overrides)
     cfg.exp_name = args.name
     return cfg
-
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
@@ -96,7 +94,6 @@ def main():
           f"steps={cfg.ppo.total_timesteps:,}")
     train(cfg, run_dir, log_every=args.log_every, quiet=args.quiet)
     print(f"[train] done -> {run_dir}/checkpoint.pt")
-
 
 if __name__ == "__main__":
     main()

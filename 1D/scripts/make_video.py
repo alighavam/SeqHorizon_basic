@@ -2,7 +2,7 @@
 """Render a GIF of a trained agent doing the task.
 
     python 1D/scripts/make_video.py --run 1D/runs/baseline_s1
-    python 1D/scripts/make_video.py --run 1D/runs/with_jumps_s1 --probe jump
+    python 1D/scripts/make_video.py --run 1D/runs/baseline_s1 --probe jump
     python 1D/scripts/make_video.py --run 1D/runs/baseline_s1 --trials 6 --noisy
 
 ``--probe jump`` films the online-replanning protocol (a target is displaced

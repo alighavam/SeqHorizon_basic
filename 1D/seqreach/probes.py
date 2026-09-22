@@ -140,7 +140,7 @@ def rollout(agent, obs_rms, cfg: Config, spec: dict, n_trials: int, seed: int = 
 # --------------------------------------------------------------- competence
 # Threshold for treating a run's behavioural measurements as interpretable.  An agent
 # below this is not doing the task, and a co-articulation index read off such an agent
-# describes a policy that plans no second movement -- see doc/1D_sequential_reach.md §6.5.
+# describes a policy that plans no second movement -- see doc/1D_task_and_design.md §8.1.
 COMPETENCE_FLOOR = 0.90
 
 
