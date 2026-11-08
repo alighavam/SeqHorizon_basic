@@ -57,7 +57,9 @@ class BatchedSeqReach1D:
 
         p, t = cfg.plant, cfg.task
         self.K = t.max_targets
-        self.obs_dim = _BASE_FEATURES + _SLOT_FEATURES * self.K
+        self.obs_start = bool(t.obs_start)
+        self.obs_dim = _BASE_FEATURES + _SLOT_FEATURES * self.K + int(self.obs_start)
+        self.d_cue = int(p.cue_delay)
         self.act_dim = 1
         self.dt = p.dt
         self.d_sens = int(p.sensory_delay)
@@ -68,10 +70,16 @@ class BatchedSeqReach1D:
 
         # Plant state
         self.x, self.v, self.a, self.u_prev = f(), f(), f(), f()
+        # Per-trial start position.  Always ``task.start_x`` in training; probes may
+        # override it via ``spec["start_x"]`` to test reaches from elsewhere.
+        self.x0 = np.full(n_, cfg.task.start_x, dtype=np.float64)
         # Trial state
         self.targets = np.zeros((n_, self.K), dtype=np.float64)
         self.n_targets, self.cur, self.dwell = i(), i(), i()
         self.preview, self.go_step, self.t = i(), i(), i()
+        # Catch trials: the go cue never fires; the trial ends successfully at catch_end.
+        self.catch = np.zeros(n_, dtype=bool)
+        self.catch_end = i()
         # Perturbation state
         self.jump_kind, self.jump_step, self.jump_slot = i(), i(), i()
         self.jump_delta = f()
@@ -132,7 +140,14 @@ class BatchedSeqReach1D:
         m = idx.size
         spec = spec or {}
 
-        self.x[idx] = t.start_x
+        if "start_x" in spec:
+            x0 = np.broadcast_to(np.asarray(spec["start_x"], dtype=np.float64), (m,))
+        elif t.start_range > 0:
+            x0 = t.start_x + self.rng.uniform(-t.start_range, t.start_range, size=m)
+        else:
+            x0 = np.full(m, t.start_x)
+        self.x0[idx] = x0
+        self.x[idx] = x0
         self.v[idx] = 0.0
         self.a[idx] = 0.0
         self.u_prev[idx] = 0.0
@@ -161,7 +176,7 @@ class BatchedSeqReach1D:
                                           (m, self.K)))
         else:
             tg = np.zeros((m, self.K))
-            prev = np.full(m, t.start_x)
+            prev = x0.copy()
             for k in range(self.K):
                 cand = self.rng.uniform(-t.target_range, t.target_range, size=m)
                 for _ in range(50):
@@ -193,6 +208,18 @@ class BatchedSeqReach1D:
             gs = self.rng.integers(lo, hi + 1, size=m)
         else:
             gs = np.zeros(m, dtype=np.int64)
+        # --- catch trials (go cue never comes)
+        if "catch" in spec:
+            ct = np.broadcast_to(np.asarray(spec["catch"], dtype=bool), (m,)).copy()
+        elif t.p_catch > 0:
+            ct = self.rng.random(m) < t.p_catch
+        else:
+            ct = np.zeros(m, dtype=bool)
+        lo_c = int(t.delay_min_s / p.dt)
+        hi_c = max(int(t.catch_max_s / p.dt), lo_c)
+        self.catch[idx] = ct
+        self.catch_end[idx] = np.where(ct, self.rng.integers(lo_c, hi_c + 1, size=m), 0)
+        gs = np.where(ct, np.iinfo(np.int64).max // 2, gs)
         self.go_step[idx] = gs
 
         # --- jumps
@@ -219,7 +246,7 @@ class BatchedSeqReach1D:
         self.jump_pending[idx] = kind != JUMP_NONE
 
         # sensory history starts flat at the initial state
-        self._x_hist[:, idx] = t.start_x
+        self._x_hist[:, idx] = x0
         self._v_hist[:, idx] = 0.0
 
     # ------------------------------------------------------------------- masks
@@ -241,7 +268,8 @@ class BatchedSeqReach1D:
         out[:, 0] = x_hat / _X_SCALE
         out[:, 1] = v_hat / _V_SCALE
         out[:, 2] = self.a / self.cfg.plant.u_max
-        out[:, 3] = (self.t >= self.go_step).astype(np.float64)
+        go_seen = self.t - self.d_cue >= self.go_step
+        out[:, 3] = go_seen.astype(np.float64)
         rel = (self.targets - x_hat[:, None]) * visible / _X_SCALE
         for k in range(self.K):
             b = _BASE_FEATURES + _SLOT_FEATURES * k
@@ -249,6 +277,8 @@ class BatchedSeqReach1D:
             out[:, b + 1] = pending[:, k]
             out[:, b + 2] = is_cur[:, k]
             out[:, b + 3] = rel[:, k]
+        if self.obs_start:
+            out[:, -1] = (self.x0 - x_hat) * (~go_seen) / _X_SCALE
         return out
 
     def _potential(self) -> np.ndarray:
@@ -325,7 +355,7 @@ class BatchedSeqReach1D:
 
         post_go = ~pre_go
         rew -= r.w_time * p.dt * post_go
-        rew -= r.w_hold * (self.x - t.start_x) ** 2 * pre_go
+        rew -= r.w_hold * (self.x - self.x0) ** 2 * pre_go
         rew -= r.w_hold_v * self.v**2 * pre_go
         rew -= r.w_wall * at_wall
 
@@ -349,10 +379,12 @@ class BatchedSeqReach1D:
         self.ep_hits += acquired
 
         completed = self.cur >= self.n_targets
-        false_start = pre_go & (np.abs(self.x - t.start_x) > t.hold_abort_dist)
+        false_start = pre_go & (np.abs(self.x - self.x0) > t.hold_abort_dist)
         rew += np.where(false_start, r.r_false_start, 0.0)
+        catch_done = self.catch & (self.t >= self.catch_end) & ~false_start
+        rew += np.where(catch_done, r.r_catch, 0.0)
 
-        terminated = completed | false_start
+        terminated = completed | false_start | catch_done
         truncated = (self.t >= t.max_steps) & ~terminated
 
         # Task reward, banked before shaping is mixed in, so the training log can report
@@ -388,6 +420,8 @@ class BatchedSeqReach1D:
                 "wall_steps": self.ep_wall[di].copy(),
                 "n_targets": self.n_targets[di].copy(),
                 "success": completed[di].copy(),
+                "catch": self.catch[di].copy(),
+                "catch_held": catch_done[di].copy(),
                 "false_start": false_start[di].copy(),
                 "timeout": truncated[di].copy(),
                 # Pre-reset acquisition pointer.  Callers cannot recover this from the

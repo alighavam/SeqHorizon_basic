@@ -84,6 +84,10 @@ def train(cfg: Config, run_dir: str | Path, log_every: int = 1, quiet: bool = Fa
 
     ep_ret, ep_len, ep_succ, ep_hitfrac = (deque(maxlen=200) for _ in range(4))
     ep_ret_task, ep_wall = (deque(maxlen=200) for _ in range(2))
+    # v2 hold diagnostics: false starts over all episodes, catch-trial holds over catch
+    # episodes.  success_rate / hit_fraction count reaching trials only, so they stay
+    # comparable with v1 runs (which have no catch trials).
+    ep_fs, ep_catch = (deque(maxlen=200) for _ in range(2))
     log_path = run_dir / "train_log.jsonl"
     log_path.write_text("")
 
@@ -172,8 +176,11 @@ def train(cfg: Config, run_dir: str | Path, log_every: int = 1, quiet: bool = Fa
                 ep_ret.extend(e["r"].tolist())
                 ep_ret_task.extend(e["r_task"].tolist())
                 ep_len.extend(e["l"].tolist())
-                ep_succ.extend(e["success"].astype(float).tolist())
-                ep_hitfrac.extend((e["hits"] / e["n_targets"]).tolist())
+                reach = ~e["catch"]
+                ep_succ.extend(e["success"][reach].astype(float).tolist())
+                ep_hitfrac.extend((e["hits"][reach] / e["n_targets"][reach]).tolist())
+                ep_fs.extend(e["false_start"].astype(float).tolist())
+                ep_catch.extend(e["catch_held"][e["catch"]].astype(float).tolist())
                 ep_wall.extend((e["wall_steps"] > 0).astype(float).tolist())
 
         # ---------------------------------------------------------------- GAE
@@ -289,6 +296,8 @@ def train(cfg: Config, run_dir: str | Path, log_every: int = 1, quiet: bool = Fa
             # Fraction of episodes touching the workspace boundary.  Should be ~0; a
             # persistently high value means the policy is parked at the wall.
             "wall_rate": float(np.mean(ep_wall)) if ep_wall else None,
+            "false_start_rate": float(np.mean(ep_fs)) if ep_fs else None,
+            "catch_hold_rate": float(np.mean(ep_catch)) if ep_catch else None,
             "mean_n_targets": float(np.dot(cur_weights, np.arange(1, len(cur_weights) + 1))),
             "value_loss": float(v_loss.item()),
             "policy_loss": float(pg_loss.item()),

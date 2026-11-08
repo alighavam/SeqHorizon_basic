@@ -30,7 +30,13 @@ class PlantConfig:
     # Constant additive motor noise.
     sigma_add: float = 0.0
     # Sensory feedback delay in steps.  >0 forces the policy to predict its own state.
+    # Applies to the proprioceptive channels (x, v) and hence to the egocentric target
+    # and start offsets, which are computed from the delayed position.
     sensory_delay: int = 0
+    # Delay, in steps, before the go cue reaches the agent.  0 means the agent sees the
+    # cue on the step it fires, so it can respond with no latency and "reaction time" is
+    # not a meaningful quantity.  >0 makes RT >= cue_delay * dt by construction.
+    cue_delay: int = 0
     # Workspace half-width.  The boundary is *inelastic*: contact zeroes velocity and is
     # charged for (reward.w_wall).  An earlier version clipped position and left velocity
     # untouched and unpenalised, which made "drive into the wall and sit" a free resting
@@ -66,6 +72,15 @@ class TaskConfig:
     target_range: float = 0.9
     min_separation: float = 0.15
     start_x: float = 0.0
+    # v2: start position drawn per trial from start_x + U[-start_range, start_range].
+    # 0 (default) reproduces v1, where every trial starts at start_x.  The hold penalty
+    # and the false-start check are always relative to the trial's own start.
+    start_range: float = 0.0
+    # v2: append the egocentric offset to the start position, (x0 - x_hat), to the
+    # observation while the go cue has not yet been perceived -- the analogue of a
+    # visible centre-hold target.  Without it a randomly placed start can only be
+    # remembered, not seen.  Appended *last*, so the v1 layout is unchanged.
+    obs_start: bool = False
 
     # Must clear the *mid-training* trajectory length, not the converged one.  At 200
     # the cap did not bind for a converged policy (~110 steps) but truncated the longer
@@ -78,6 +93,12 @@ class TaskConfig:
     delay_min_s: float = 0.25
     delay_max_s: float = 1.00
     hold_abort_dist: float = 0.15  # leaving this window before go aborts the trial
+    # v2 catch trials: with probability p_catch the go cue never comes.  The agent must
+    # hold for catch_hold_s (drawn from [delay_min_s, catch_max_s]) and is then paid
+    # reward.r_catch.  Makes drifting towards the target before the cue costly, and
+    # flattens the hazard of the go cue (it is no longer certain by delay_max_s).
+    p_catch: float = 0.0
+    catch_max_s: float = 1.5
 
     # Acquisition.  dwell_inter is the separability knob (ablation axis C1):
     # a long intermediate dwell forces v=0 at each target and provably destroys lookahead.
@@ -110,6 +131,7 @@ class RewardConfig:
     r_hit: float = 10.0
     r_final: float = 20.0
     r_false_start: float = -5.0
+    r_catch: float = 5.0  # paid for holding through a catch trial (task.p_catch)
 
     w_effort: float = 0.5  # on (u/u_max)^2 * dt        -- ablation axis C2
     w_rate: float = 0.05  # on ((u - u_prev)/u_max)^2

@@ -82,6 +82,8 @@ def eval_spec(cfg: Config, n_trials: int) -> dict:
 def video_config(cfg: Config, vcfg: VideoConfig) -> Config:
     """Plant used for filming.  Noise off by default so the same seed replays the same
     trial at every checkpoint and successive videos are comparable frame for frame."""
+    # Filmed trials are reaching trials from the trained start: no catch trials.
+    cfg = cfg.override({"task.p_catch": 0.0, "task.start_range": 0.0})
     if not vcfg.noiseless:
         return cfg
     return cfg.override({"plant.sigma_sdn": 0.0, "plant.sigma_add": 0.0})

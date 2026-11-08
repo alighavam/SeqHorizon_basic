@@ -23,7 +23,9 @@ def probe_config(cfg: Config, noiseless: bool = True) -> Config:
     """Evaluation plant.  Motor noise off by default so a deterministic policy yields
     exactly reproducible trajectories; re-run with ``noiseless=False`` to confirm any
     effect survives signal-dependent noise."""
-    over = {"task.p_jump": 0.0}
+    # Probes define their own trials: no jumps, no catch trials, and the trained start
+    # unless a spec passes ``start_x`` explicitly.
+    over = {"task.p_jump": 0.0, "task.p_catch": 0.0, "task.start_range": 0.0}
     if noiseless:
         over["plant.sigma_sdn"] = 0.0
         over["plant.sigma_add"] = 0.0
