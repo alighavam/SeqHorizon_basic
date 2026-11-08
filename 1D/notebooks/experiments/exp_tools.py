@@ -235,8 +235,7 @@ def horizon_probe(run, n_geom: int = 400, start_range: float = 0.5, seed: int = 
     Returns ``(trials_df, geometry)``, plus the raw rollout if ``return_traj``.
     Noiseless plant, mean action.
     """
-    agent, obs_rms, cfg = load_agent(run)
-    pcfg = probes.probe_config(cfg)
+    _, _, cfg = load_agent(run)
     t, dt, K = cfg.task, cfg.plant.dt, cfg.task.max_targets
     rng = np.random.default_rng(seed)
 
@@ -258,18 +257,40 @@ def horizon_probe(run, n_geom: int = 400, start_range: float = 0.5, seed: int = 
     n_arr = np.repeat([c[0] for c in conds], n_geom)
     h_arr = np.repeat([c[1] for c in conds], n_geom)
     gi = np.tile(np.arange(n_geom), C)
-    spec = {"n_targets": n_arr, "preview": h_arr, "start_x": x0[gi], "targets": tg[gi],
-            "delay_steps": go[gi], "catch": np.zeros(len(gi), dtype=bool)}
-    tr = probes.rollout(agent, obs_rms, pcfg, spec, n_trials=len(gi), seed=seed)
+    df, tr = measure_trials(run, x0[gi], tg[gi], go[gi], n_arr, h_arr, seed=seed,
+                            rt_threshold=rt_threshold)
+    df.insert(0, "geom", gi)
+    df.insert(1, "cond", [cond_label(n, h) for n, h in zip(n_arr, h_arr)])
+    geo = {"x0": x0, "targets": tg, "go": go, "dt": dt}
+    return (df, geo, tr) if return_traj else (df, geo)
+
+
+def measure_trials(run, x0, tg, go, n_targets, preview, seed: int = 0,
+                   rt_threshold: float = 2.0, noiseless: bool = True):
+    """Run one trial per row (start ``x0``, targets ``tg`` (N, K), go step ``go``,
+    ``n_targets``, ``preview``) and measure RT, the first reach and the T1/T2 exits.
+
+    The measures are documented in ``horizon_probe``.  ``noiseless=False`` turns the
+    plant's motor noise back on (the policy still takes its mean action).
+    Returns ``(trials_df, raw_rollout)``.
+    """
+    agent, obs_rms, cfg = load_agent(run)
+    pcfg = probes.probe_config(cfg, noiseless=noiseless)
+    dt = cfg.plant.dt
+    x0, tg = np.asarray(x0, float), np.asarray(tg, float)
+    n_arr, h_arr = np.asarray(n_targets), np.asarray(preview)
+    spec = {"n_targets": n_arr, "preview": h_arr, "start_x": x0, "targets": tg,
+            "delay_steps": np.asarray(go), "catch": np.zeros(len(x0), dtype=bool)}
+    tr = probes.rollout(agent, obs_rms, pcfg, spec, n_trials=len(x0), seed=seed)
 
     entry = tr["entry_step"]
     rows = []
-    for i in range(len(gi)):
+    for i in range(len(x0)):
         g, e = int(tr["go_step"][i]), int(tr["end_step"][i])
-        a, b = x0[gi[i]], tg[gi[i]]
+        a, b = x0[i], tg[i]
         s1 = np.sign(b[0] - a)
-        rec = {"geom": int(gi[i]), "n_targets": int(n_arr[i]), "preview": int(h_arr[i]),
-               "cond": cond_label(n_arr[i], h_arr[i]), "x0": a, "T1": b[0], "T2": b[1],
+        rec = {"n_targets": int(n_arr[i]), "preview": int(h_arr[i]),
+               "x0": a, "T1": b[0], "T2": b[1],
                "T3": b[2], "go_s": g * dt, "success": bool(tr["success"][i]),
                "false_start": bool(tr["false_start"][i]), "rt_ms": np.nan, "rt_u_ms": np.nan,
                "wrong_way": np.nan, "peak_v1": np.nan, "mt1_ms": np.nan,
@@ -309,9 +330,7 @@ def horizon_probe(run, n_geom: int = 400, start_range: float = 0.5, seed: int = 
                 rec["v_out2"] = float(tr["v"][e2, i] * s2)
                 rec["d_next2"] = (b[2] - b[1]) * s2
         rows.append(rec)
-    df = pd.DataFrame(rows)
-    geo = {"x0": x0, "targets": tg, "go": go, "dt": dt}
-    return (df, geo, tr) if return_traj else (df, geo)
+    return pd.DataFrame(rows), tr
 
 
 def horizon_ci(df: pd.DataFrame, deg: int = 3) -> dict:
@@ -344,3 +363,55 @@ def horizon_ci(df: pd.DataFrame, deg: int = 3) -> dict:
             res["ci_2"] = _coef(g.v_out2.to_numpy(), X2, 0)
         out[cond] = res
     return out
+
+
+# ----------------------------------------------------------- direction probe
+def direction_probe(run, n_geom: int = 300, d1=(0.2, 0.3), d2=(0.4, 0.6),
+                    start_range: float = 0.5, seed: int = 21, noiseless: bool = True,
+                    rt_threshold: float = 2.0):
+    """Two-target trials in which only the *direction* of T2 changes.
+
+    Each geometry draws a start x0 ~ U[-start_range, start_range], a reach direction s,
+    a first-reach length d1 and a second-reach length d2 (uniform in the given
+    ranges), and a go time from the training hold distribution.  Then
+        T1 = x0 + s d1,   T2 = T1 + s d2 (``continues``)  or  T1 - s d2 (``reverses``),
+    redrawn until all three points lie inside the target range.  Each geometry is run in
+    four conditions: continues / reverses x T2 visible (H = 2) / hidden (H = 1).  With T2
+    hidden the two directions are *the same trial* up to T1 entry, so their RT
+    difference is exactly 0: the built-in null.
+
+    Returns a trial DataFrame with ``geom``, ``T2_dir`` and ``visible`` columns.
+    """
+    _, _, cfg = load_agent(run)
+    t, dt, K = cfg.task, cfg.plant.dt, cfg.task.max_targets
+    rng = np.random.default_rng(seed)
+    R = t.target_range
+    x0, s, a, b = (np.empty(n_geom) for _ in range(4))
+    for i in range(n_geom):
+        while True:
+            x0[i] = rng.uniform(-start_range, start_range)
+            s[i] = rng.choice([-1.0, 1.0])
+            a[i], b[i] = rng.uniform(*d1), rng.uniform(*d2)
+            T1 = x0[i] + s[i] * a[i]
+            if max(abs(T1), abs(T1 + s[i] * b[i]), abs(T1 - s[i] * b[i])) <= R:
+                break
+    go = rng.integers(int(t.delay_min_s / dt), int(t.delay_max_s / dt) + 1, n_geom)
+    T1 = x0 + s * a
+
+    rows_x0, rows_tg, rows_go, labels = [], [], [], []
+    for direction, sign in (("continues", 1.0), ("reverses", -1.0)):
+        T2 = T1 + sign * s * b
+        tg = np.zeros((n_geom, K))
+        tg[:, 0], tg[:, 1:] = T1, T2[:, None]
+        for vis, H in (("visible", 2), ("hidden", 1)):
+            rows_x0.append(x0), rows_tg.append(tg), rows_go.append(go)
+            labels += [(g, direction, vis, H) for g in range(n_geom)]
+    H = np.array([l[3] for l in labels])
+    df, _ = measure_trials(run, np.concatenate(rows_x0), np.concatenate(rows_tg),
+                           np.concatenate(rows_go), np.full(len(H), 2), H, seed=seed,
+                           rt_threshold=rt_threshold, noiseless=noiseless)
+    df.insert(0, "geom", [l[0] for l in labels])
+    df.insert(1, "T2_dir", [l[1] for l in labels])
+    df.insert(2, "visible", [l[2] for l in labels])
+    df["d1"], df["d2"] = np.tile(a, 4), np.tile(b, 4)
+    return df
