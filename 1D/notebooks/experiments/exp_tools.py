@@ -181,3 +181,166 @@ def lookahead(run):
     return {"ci": res["preview_on"]["ci"], "ci_p": res["preview_on"]["ci_p"],
             "ci_control": res["preview_off"]["ci"],
             "t2_v_spread": dep.get("v_spread_rms", np.nan)}
+
+
+# ------------------------------------------------------------- horizon probe
+# (n_targets, preview H) conditions.  H = n is full preview: every target of the
+# sequence is visible from trial onset.  H = 1 shows only the current target, but the
+# "pending" flags still tell the agent how many targets remain -- so H1 trials know the
+# sequence length without knowing where the later targets are.
+HORIZON_CONDS = ((1, 1), (2, 2), (3, 3), (2, 1), (3, 1))
+
+
+def cond_label(n: int, h: int) -> str:
+    return f"{n} tgt" if h == n else f"{n} tgt, H1"
+
+
+def _poly_basis(a: np.ndarray, b: np.ndarray, deg: int = 3) -> np.ndarray:
+    """All monomials a^i b^j with i + j <= deg (includes the constant)."""
+    return np.column_stack([a ** i * b ** j for i in range(deg + 1)
+                            for j in range(deg + 1 - i)])
+
+
+def _coef(y: np.ndarray, X: np.ndarray, col: int) -> float:
+    ok = np.isfinite(y) & np.isfinite(X).all(1)
+    if ok.sum() <= X.shape[1] + 2:
+        return np.nan
+    c, *_ = np.linalg.lstsq(X[ok], y[ok], rcond=None)
+    return float(c[col])
+
+
+def horizon_probe(run, n_geom: int = 400, start_range: float = 0.5, seed: int = 11,
+                  rt_threshold: float = 2.0, conds=HORIZON_CONDS, return_traj: bool = False):
+    """Sequences of 1, 2 or 3 random targets from random starts, geometry matched.
+
+    ``n_geom`` random geometries are drawn once -- start x0 ~ U[-start_range,
+    start_range], targets T1..T3 uniform in the target range with the training
+    min-separation, and a go time from the training hold distribution.  Each geometry
+    is then replayed in every condition of ``conds``.  A 2-target trial is therefore the
+    1-target trial plus T2, and so on: any change in RT or in the first reach comes
+    from the extra targets alone, not from a different first reach.
+
+    Per trial:
+      * ``rt_ms``  -- force-onset RT: when the force on the mass (the command after the
+        50 ms actuator lag) first reaches ``rt_threshold`` (25% of u_max), interpolated
+        between steps, in ms from the true go step (so it includes the 80 ms cue delay).
+        Force is signed towards T1.  ``rt_u_ms`` is the command RT (first step with
+        u >= threshold towards T1), quantised to the 20 ms step; ``wrong_way`` flags a
+        command of the same size in the wrong direction before it.
+      * ``v_out``  -- velocity on first entering T1, signed so + = still moving the way
+        the first reach went; ``d_next`` = (T2 - T1) in the same frame (+ = T2 continues
+        onward).  ``v_out2`` / ``d_next2`` are the same at T2 (3-target trials).
+      * first-reach peak speed and movement time to T1 entry.
+
+    Returns ``(trials_df, geometry)``, plus the raw rollout if ``return_traj``.
+    Noiseless plant, mean action.
+    """
+    agent, obs_rms, cfg = load_agent(run)
+    pcfg = probes.probe_config(cfg)
+    t, dt, K = cfg.task, cfg.plant.dt, cfg.task.max_targets
+    rng = np.random.default_rng(seed)
+
+    x0 = rng.uniform(-start_range, start_range, n_geom)
+    tg = np.zeros((n_geom, K))
+    prev = x0.copy()
+    for k in range(K):
+        cand = rng.uniform(-t.target_range, t.target_range, n_geom)
+        for _ in range(200):
+            bad = np.abs(cand - prev) < t.min_separation
+            if not bad.any():
+                break
+            cand[bad] = rng.uniform(-t.target_range, t.target_range, int(bad.sum()))
+        tg[:, k] = cand
+        prev = cand
+    go = rng.integers(int(t.delay_min_s / dt), int(t.delay_max_s / dt) + 1, n_geom)
+
+    C = len(conds)
+    n_arr = np.repeat([c[0] for c in conds], n_geom)
+    h_arr = np.repeat([c[1] for c in conds], n_geom)
+    gi = np.tile(np.arange(n_geom), C)
+    spec = {"n_targets": n_arr, "preview": h_arr, "start_x": x0[gi], "targets": tg[gi],
+            "delay_steps": go[gi], "catch": np.zeros(len(gi), dtype=bool)}
+    tr = probes.rollout(agent, obs_rms, pcfg, spec, n_trials=len(gi), seed=seed)
+
+    entry = tr["entry_step"]
+    rows = []
+    for i in range(len(gi)):
+        g, e = int(tr["go_step"][i]), int(tr["end_step"][i])
+        a, b = x0[gi[i]], tg[gi[i]]
+        s1 = np.sign(b[0] - a)
+        rec = {"geom": int(gi[i]), "n_targets": int(n_arr[i]), "preview": int(h_arr[i]),
+               "cond": cond_label(n_arr[i], h_arr[i]), "x0": a, "T1": b[0], "T2": b[1],
+               "T3": b[2], "go_s": g * dt, "success": bool(tr["success"][i]),
+               "false_start": bool(tr["false_start"][i]), "rt_ms": np.nan, "rt_u_ms": np.nan,
+               "wrong_way": np.nan, "peak_v1": np.nan, "mt1_ms": np.nan,
+               "v_out": np.nan, "d_next": (b[1] - b[0]) * s1, "dist1": abs(b[0] - a),
+               "v_out2": np.nan, "d_next2": np.nan}
+        if e >= g:
+            # RT counts force *towards T1* (signed), as in force-onset RT in people.
+            # A brief push the wrong way first is recorded separately (``wrong_way``).
+            # Command RT: the policy's output is held for a whole step, so it is
+            # quantised to 20 ms.  Step g + k is the k-th step after the go step.
+            u = tr["u"][g:e + 1, i] * s1
+            k = np.flatnonzero(u >= rt_threshold)
+            if k.size:
+                rec["rt_u_ms"] = int(k[0]) * dt * 1000
+                rec["wrong_way"] = bool((u[:k[0]] <= -rt_threshold).any())
+            # Force RT: the force on the mass is the command through the 50 ms
+            # actuator lag, a continuous signal, so its threshold crossing can be
+            # interpolated.  Recorded state g + k is the end of step g + k, i.e.
+            # (k + 1) dt after the go step began.  A strong command crosses within the
+            # first step after it is issued, a weak one takes longer.
+            f = tr["a"][g:e + 1, i] * s1
+            k = np.flatnonzero(f >= rt_threshold)
+            if k.size:
+                k0 = int(k[0])
+                f_prev = f[k0 - 1] if k0 else 0.0
+                frac = (rt_threshold - f_prev) / (f[k0] - f_prev)
+                rec["rt_ms"] = (k0 + frac) * dt * 1000
+            e1 = int(entry[i, 0])
+            if e1 >= g:
+                seg = tr["v"][g:e1 + 1, i]
+                rec["peak_v1"] = float(np.abs(seg).max())
+                rec["mt1_ms"] = (e1 + 1 - g) * dt * 1000 - rec["rt_ms"]
+                rec["v_out"] = float(tr["v"][e1, i] * s1)
+            e2 = int(entry[i, 1])
+            if n_arr[i] >= 3 and e2 > e1 >= g:
+                s2 = np.sign(b[1] - b[0])
+                rec["v_out2"] = float(tr["v"][e2, i] * s2)
+                rec["d_next2"] = (b[2] - b[1]) * s2
+        rows.append(rec)
+    df = pd.DataFrame(rows)
+    geo = {"x0": x0, "targets": tg, "go": go, "dt": dt}
+    return (df, geo, tr) if return_traj else (df, geo)
+
+
+def horizon_ci(df: pd.DataFrame, deg: int = 3) -> dict:
+    """Lookahead from random-geometry trials.
+
+    With T1 and the start random, the speed at T1 depends strongly on the first reach
+    itself (its length, how close T1 is to the wall).  So the co-articulation index is
+    the partial slope of v_out on d_next, controlling for a cubic polynomial in
+    (x0, T1).  The H1 condition is the empirical null: there T2 is invisible until T1 is
+    entered, so the true slope is exactly 0.
+
+    For 3-target trials also: ``ci_T3`` (does T3 change the exit speed at T1, beyond
+    T2?) and ``ci_2`` (lookahead at T2 towards T3, controlling for T1 and T2).
+    """
+    d = df[df.success]
+    out = {}
+    for cond, g in d.groupby("cond"):
+        if g.n_targets.iloc[0] < 2:
+            continue
+        base = _poly_basis(g.x0.to_numpy(), g.T1.to_numpy(), deg)
+        X = np.column_stack([g.d_next, base])
+        res = {"ci": _coef(g.v_out.to_numpy(), X, 0), "n_ci": int(g.v_out.notna().sum())}
+        if g.n_targets.iloc[0] == 3:
+            s1 = np.sign(g.T1 - g.x0).to_numpy()
+            d3 = ((g.T3 - g.T2) * s1).to_numpy()
+            X3 = np.column_stack([g.d_next, d3, base])
+            res["ci_T3"] = _coef(g.v_out.to_numpy(), X3, 1)
+            base2 = _poly_basis(g.T1.to_numpy(), g.T2.to_numpy(), deg)
+            X2 = np.column_stack([g.d_next2, base2])
+            res["ci_2"] = _coef(g.v_out2.to_numpy(), X2, 0)
+        out[cond] = res
+    return out
