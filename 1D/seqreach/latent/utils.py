@@ -77,14 +77,17 @@ def dist_to_G(dist: np.ndarray) -> np.ndarray:
 
 
 def cosine_similarity(D1: np.ndarray, D2: np.ndarray) -> float:
-    """Cosine similarity between two matrices, compared as flattened vectors.
+    """Cosine similarity between two matrices, compared as flattened vectors, as the
+    original computes it.
 
-    Change from the original: it shifted each vector by ``- min - (max - min)``
-    (i.e. by ``- max``) before the cosine, which looks like a typo for a min-max
-    rescaling and makes the result depend on each matrix's maximum.  This is the
-    plain cosine.
+    Note: the original's ``(r - min) - (max - min)`` simplifies to ``r - max``, so each
+    matrix is shifted to have its maximum at 0 before the cosine.  That makes the
+    measure insensitive to adding a constant or rescaling either matrix.  It may have
+    been meant as a min-max rescaling ``(r - min) / (max - min)``; kept as written.
     """
     r1, r2 = np.ravel(D1).astype(float), np.ravel(D2).astype(float)
+    r1 = (r1 - r1.min()) - (r1.max() - r1.min())
+    r2 = (r2 - r2.min()) - (r2.max() - r2.min())
     return float(r1 @ r2 / np.sqrt((r1 @ r1) * (r2 @ r2)))
 
 

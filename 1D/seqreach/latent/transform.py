@@ -134,8 +134,10 @@ class jPCA:
     * Pairs are ``(x_t, x_{t+1} - x_t)``, as in Churchland's code (the original paired
       the difference with ``x_{t+1}``).
     * **Bug fixed:** the original took the first eigenvalue pair that ``np.linalg.eig``
-      returned, which is not sorted, so the plane was not reliably the fastest one.
-      Here planes are sorted by rotation frequency; ``planes_`` holds all of them.
+      returned.  The order is not sorted: the first pair is usually the fastest, but in
+      2-7 % of random skew-symmetric matrices it is not, and with an odd ``num_latent``
+      it can be the zero eigenvalue.  Here planes are sorted by rotation frequency;
+      ``planes_`` holds all of them.
     * **Bug fixed:** the original's counter-clockwise check flipped the second axis
       whenever the cross product was non-zero, i.e. almost always.  Here the basis is
       built so the fitted rotation is counter-clockwise, and the optional alignment of

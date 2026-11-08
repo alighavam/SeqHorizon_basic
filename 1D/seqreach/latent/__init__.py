@@ -25,22 +25,33 @@ Adapted to a GRU instead of spiking neurons:
   and ``pymanopt`` are replaced by numpy implementations of the same estimators,
   checked against known answers in ``tests/test_latent.py``.
 
-Bugs fixed (worth telling the author):
+Bugs fixed, each confirmed by running the original code on a case with a known
+answer:
 
-* ``FA.transform(ensure_orthogonality=True)`` used rows instead of columns of the
-  singular vectors, so it did not project onto the factor subspace.
-* ``jPCA`` took the first eigenvalue pair ``np.linalg.eig`` returned (unsorted), not
-  the fastest rotation; its counter-clockwise check flipped the axis whenever the
-  cross product was non-zero; ``transform`` refitted the PCA on new data.
-* ``OrthogonalPCA3`` / ``OrthogonalPCA3D`` used ``units_range`` before setting it
-  (fails on a fresh object); ``OrthogonalPCA3`` normalised the shared epoch twice.
-* ``CCA_svd`` did not centre the data, so the mean pattern counted as a shared
-  dimension.
-* ``alignment_index_crossval(same=None)`` did not infer ``same`` as documented.
-* ``PCA.variance`` divided by ``n_units - 1`` instead of ``n_samples - 1``.
-* ``cosine_similarity`` shifted each matrix by its maximum before the cosine.
-* ``stats.R2`` / ``stats.r`` were uncentred (flagged in the original as a question);
-  they are centred by default now (``centered=False`` gives the original).
+* ``FA.transform(ensure_orthogonality=True)`` projects onto ``U[:k, :].T`` (the
+  first k *rows* of the left singular vectors) instead of ``U[:, :k]``, so not onto
+  the factor subspace.
+* ``jPCA``: the counter-clockwise check tests the cross product of two orthonormal
+  vectors, which is always +-1, so the axis is always flipped and the rotation
+  direction ends up depending on SVD signs (CCW in 11 of 40 test datasets).
+  ``transform`` refits the PCA on the data it is given, so it is only right for the
+  exact data passed to ``fit``.  The plane is the first eigenvalue pair
+  ``np.linalg.eig`` returns, which is not sorted; usually the fastest, but not always
+  (2-7 % of random skew matrices; with an odd ``num_latent`` it can be the zero
+  eigenvalue).
+* ``OrthogonalPCA3`` / ``OrthogonalPCA3D`` use ``units_range`` before setting it
+  (AttributeError on a fresh object); ``OrthogonalPCA3`` also normalises the shared
+  epoch a second time and prints its variance against the execution covariance.
+* ``CCA_svd`` does not centre the data: unrelated data with non-zero means give a
+  first canonical correlation of 0.999.
+* ``alignment_index_crossval(same=None)`` does not infer ``same`` as its docstring
+  says, so passing the same array twice uses overlapping halves.
+* ``PCA`` stores the eigenvalue variances as ``varianve`` (typo), divided by
+  ``n_units - 1`` instead of ``n_samples - 1``.
+
+Conventions changed (not bugs): ``stats.R2`` / ``stats.r`` are centred by default
+(the original is uncentred and marks it as an open question; ``centered=False`` gives
+the original), and no soft normalisation by default.
 
 Not ported: ``Model.fit(method="PCM")`` (needs PcmPy), ``Kernel_Cosine`` (reach angles
 have no meaning in 1-D; ``utils.GaussianBasis1D`` replaces ``Kernel_Gaussian``), and
