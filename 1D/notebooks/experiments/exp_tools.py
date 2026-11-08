@@ -270,13 +270,16 @@ def measure_trials(run, x0, tg, go, n_targets, preview, seed: int = 0,
     """Run one trial per row (start ``x0``, targets ``tg`` (N, K), go step ``go``,
     ``n_targets``, ``preview``) and measure RT, the first reach and the T1/T2 exits.
 
-    The measures are documented in ``horizon_probe``.  ``noiseless=False`` turns the
+    The measures are documented in ``horizon_probe``, plus two that separate *when* the
+    response starts from *how hard* it starts: ``onset_ms``, the first step (once the cue
+    can be seen) at which the command moves >= 0.2 from its pre-cue value, and
+    ``u_first``, the first post-cue command, signed towards T1.  ``noiseless=False`` turns the
     plant's motor noise back on (the policy still takes its mean action).
     Returns ``(trials_df, raw_rollout)``.
     """
     agent, obs_rms, cfg = load_agent(run)
     pcfg = probes.probe_config(cfg, noiseless=noiseless)
-    dt = cfg.plant.dt
+    dt, cue = cfg.plant.dt, int(cfg.plant.cue_delay)
     x0, tg = np.asarray(x0, float), np.asarray(tg, float)
     n_arr, h_arr = np.asarray(n_targets), np.asarray(preview)
     spec = {"n_targets": n_arr, "preview": h_arr, "start_x": x0, "targets": tg,
@@ -293,10 +296,19 @@ def measure_trials(run, x0, tg, go, n_targets, preview, seed: int = 0,
                "x0": a, "T1": b[0], "T2": b[1],
                "T3": b[2], "go_s": g * dt, "success": bool(tr["success"][i]),
                "false_start": bool(tr["false_start"][i]), "rt_ms": np.nan, "rt_u_ms": np.nan,
-               "wrong_way": np.nan, "peak_v1": np.nan, "mt1_ms": np.nan,
+               "onset_ms": np.nan, "u_first": np.nan, "wrong_way": np.nan, "peak_v1": np.nan, "mt1_ms": np.nan,
                "v_out": np.nan, "d_next": (b[1] - b[0]) * s1, "dist1": abs(b[0] - a),
                "v_out2": np.nan, "d_next2": np.nan}
         if e >= g:
+            # Response onset (latency): the first step, once the cue can be seen, at which
+            # the command moves >= 0.2 (2.5% of u_max) in either direction from the last
+            # pre-cue command.  Command k after go is issued at k * dt.  ``u_first`` is the
+            # first post-cue command towards T1 (the vigour of the response).
+            us = tr["u"][g:e + 1, i] * s1
+            base = us[cue - 1] if cue > 0 else tr["u"][g - 1, i] * s1
+            dev = np.flatnonzero(np.abs(us[cue:] - base) >= 0.2)
+            rec["onset_ms"] = (cue + int(dev[0])) * dt * 1000 if dev.size else np.nan
+            rec["u_first"] = float(us[cue]) if len(us) > cue else np.nan
             # RT counts force *towards T1* (signed), as in force-onset RT in people.
             # A brief push the wrong way first is recorded separately (``wrong_way``).
             # Command RT: the policy's output is held for a whole step, so it is
@@ -368,7 +380,7 @@ def horizon_ci(df: pd.DataFrame, deg: int = 3) -> dict:
 # ----------------------------------------------------------- direction probe
 def direction_probe(run, n_geom: int = 300, d1=(0.2, 0.3), d2=(0.4, 0.6),
                     start_range: float = 0.5, seed: int = 21, noiseless: bool = True,
-                    rt_threshold: float = 2.0):
+                    rt_threshold: float = 2.0, return_traj: bool = False):
     """Two-target trials in which only the *direction* of T2 changes.
 
     Each geometry draws a start x0 ~ U[-start_range, start_range], a reach direction s,
@@ -380,7 +392,8 @@ def direction_probe(run, n_geom: int = 300, d1=(0.2, 0.3), d2=(0.4, 0.6),
     hidden the two directions are *the same trial* up to T1 entry, so their RT
     difference is exactly 0: the built-in null.
 
-    Returns a trial DataFrame with ``geom``, ``T2_dir`` and ``visible`` columns.
+    Returns a trial DataFrame with ``geom``, ``T2_dir`` and ``visible`` columns (and the
+    raw rollout, row-aligned with it, if ``return_traj``).
     """
     _, _, cfg = load_agent(run)
     t, dt, K = cfg.task, cfg.plant.dt, cfg.task.max_targets
@@ -407,11 +420,11 @@ def direction_probe(run, n_geom: int = 300, d1=(0.2, 0.3), d2=(0.4, 0.6),
             rows_x0.append(x0), rows_tg.append(tg), rows_go.append(go)
             labels += [(g, direction, vis, H) for g in range(n_geom)]
     H = np.array([l[3] for l in labels])
-    df, _ = measure_trials(run, np.concatenate(rows_x0), np.concatenate(rows_tg),
+    df, tr = measure_trials(run, np.concatenate(rows_x0), np.concatenate(rows_tg),
                            np.concatenate(rows_go), np.full(len(H), 2), H, seed=seed,
                            rt_threshold=rt_threshold, noiseless=noiseless)
     df.insert(0, "geom", [l[0] for l in labels])
     df.insert(1, "T2_dir", [l[1] for l in labels])
     df.insert(2, "visible", [l[2] for l in labels])
     df["d1"], df["d2"] = np.tile(a, 4), np.tile(b, 4)
-    return df
+    return (df, tr) if return_traj else df
