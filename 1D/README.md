@@ -80,7 +80,7 @@ python -m pytest 1D/tests -q
 | `seqreach/video.py` | animated GIF of a rollout (training and test time) |
 | `seqreach/tracking.py` | Weights & Biases facade; inert when disabled |
 | `scripts/` | `train.py`, `analyze.py`, `run_ablations.py`, `run_experiment.py`, `make_video.py`, `wandb_sync.py` |
-| `notebooks/train_model.ipynb` | walkthrough of config → env → reward → agent → training → probes |
+| `notebooks/` | four lessons, in order: `01_task_and_physics`, `02_reward`, `03_agent_and_training`, `04_measuring_an_agent` (helpers in `lesson_tools.py`) |
 | `runs/` | checkpoints, logs, `videos/`, `analysis/` figures (gitignored; checkpoints are on W&B) |
 
 ## Video
