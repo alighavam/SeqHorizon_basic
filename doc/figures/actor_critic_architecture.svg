@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 470" width="1160" height="470" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#3a3f47"/>
+    </marker>
+    <marker id="arrA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2b6cb0"/>
+    </marker>
+    <marker id="arrC" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#b7791f"/>
+    </marker>
+    <style>
+      .box   { fill:#f4f5f7; stroke:#3a3f47; stroke-width:1.4; }
+      .gru   { fill:#e6f2ea; stroke:#2f7a4b; stroke-width:1.6; }
+      .act   { fill:#e8f0fa; stroke:#2b6cb0; stroke-width:1.4; }
+      .crit  { fill:#fbf1e1; stroke:#b7791f; stroke-width:1.4; }
+      .sub   { fill:#ffffff; stroke:#9aa1ab; stroke-width:1; }
+      .title { font-size:15px; font-weight:bold; fill:#1f2328; text-anchor:middle; }
+      .txt   { font-size:13px; fill:#1f2328; text-anchor:middle; }
+      .small { font-size:11.5px; fill:#555c66; text-anchor:middle; }
+      .left  { text-anchor:start; }
+      .mono  { font-family:Menlo, Consolas, monospace; font-size:11.5px; fill:#1f2328; }
+      .edge  { stroke:#3a3f47; stroke-width:1.5; fill:none; marker-end:url(#arr); }
+      .edgeA { stroke:#2b6cb0; stroke-width:1.5; fill:none; marker-end:url(#arrA); }
+      .edgeC { stroke:#b7791f; stroke-width:1.5; fill:none; marker-end:url(#arrC); }
+      .lbl   { font-size:12.5px; fill:#1f2328; font-style:italic; }
+    </style>
+  </defs>
+
+  <!-- ===== Observation ===== -->
+  <rect class="box" x="20" y="95" width="185" height="215" rx="8"/>
+  <text class="title" x="112" y="118">Observation  o<tspan font-size="10" dy="3">t</tspan><tspan dy="-3"> (16)</tspan></text>
+  <rect class="sub" x="32" y="130" width="161" height="62" rx="5"/>
+  <text class="small" x="112" y="146" font-weight="bold" fill="#1f2328">mass (4)</text>
+  <text class="mono" x="44" y="164">x̂, v̂, a_prev/u_max,</text>
+  <text class="mono" x="44" y="180">go_flag</text>
+  <rect class="sub" x="32" y="200" width="161" height="98" rx="5"/>
+  <text class="small" x="112" y="216" font-weight="bold" fill="#1f2328">3 target slots × 4 (12)</text>
+  <text class="mono" x="44" y="234">visible</text>
+  <text class="mono" x="44" y="250">pending</text>
+  <text class="mono" x="44" y="266">is_current</text>
+  <text class="mono" x="44" y="282">(T_i − x̂)·visible</text>
+
+  <path class="edge" d="M205,202 L228,202"/>
+
+  <!-- ===== Normalise ===== -->
+  <rect class="box" x="230" y="160" width="112" height="84" rx="8" stroke-dasharray="5 3"/>
+  <text class="title" x="286" y="185">Normalise</text>
+  <text class="small" x="286" y="205">running</text>
+  <text class="small" x="286" y="220">mean / std</text>
+  <text class="small" x="286" y="235">clip ±10</text>
+
+  <path class="edge" d="M342,202 L364,202"/>
+
+  <!-- ===== Trunk ===== -->
+  <rect class="box" x="366" y="155" width="118" height="94" rx="8"/>
+  <text class="title" x="425" y="182">Linear</text>
+  <text class="txt" x="425" y="201">16 → 128</text>
+  <text class="txt" x="425" y="219">+ tanh</text>
+  <text class="small" x="425" y="239">2,176</text>
+
+  <path class="edge" d="M484,202 L506,202"/>
+
+  <rect class="box" x="508" y="155" width="118" height="94" rx="8"/>
+  <text class="title" x="567" y="182">Linear</text>
+  <text class="txt" x="567" y="201">128 → 128</text>
+  <text class="txt" x="567" y="219">+ tanh</text>
+  <text class="small" x="567" y="239">16,512</text>
+
+  <path class="edge" d="M626,202 L652,202"/>
+
+  <!-- ===== GRU ===== -->
+  <rect class="gru" x="654" y="145" width="132" height="114" rx="8"/>
+  <text class="title" x="720" y="176">GRU</text>
+  <text class="txt" x="720" y="196">128 units</text>
+  <text class="txt" x="720" y="214">1 layer</text>
+  <text class="small" x="720" y="240">99,072</text>
+  <!-- recurrence loop -->
+  <path d="M752,145 L752,105 L688,105 L688,141" stroke="#2f7a4b" stroke-width="1.5" fill="none" marker-end="url(#arr)"/>
+  <text class="lbl" x="720" y="96" text-anchor="middle">h<tspan font-size="9" dy="3">t−1</tspan><tspan dy="-3"> · (1 − done)</tspan></text>
+
+  <!-- shared bracket -->
+  <path d="M366,276 L366,284 L786,284 L786,276" stroke="#6b7280" stroke-width="1.2" fill="none"/>
+  <text class="small" x="576" y="301">shared by actor and critic</text>
+
+  <!-- ===== h_t branch ===== -->
+  <path d="M786,202 L812,202" stroke="#3a3f47" stroke-width="1.5" fill="none"/>
+  <circle cx="812" cy="202" r="3" fill="#3a3f47"/>
+  <text class="lbl" x="797" y="194" text-anchor="middle">h<tspan font-size="9" dy="3">t</tspan></text>
+  <path class="edgeA" d="M812,202 L812,128 L838,128"/>
+  <path class="edgeC" d="M812,202 L812,348 L838,348"/>
+
+  <!-- ===== Actor ===== -->
+  <rect class="act" x="840" y="100" width="126" height="56" rx="8"/>
+  <text class="title" x="903" y="123" fill="#1d4f86">actor mean</text>
+  <text class="txt" x="903" y="143">Linear 128 → 1</text>
+
+  <rect class="act" x="840" y="22" width="126" height="48" rx="8" stroke-dasharray="5 3"/>
+  <text class="txt" x="903" y="42">log σ</text>
+  <text class="small" x="903" y="59">1 free parameter</text>
+
+  <path class="edgeA" d="M966,128 L999,128"/>
+  <text class="lbl" x="983" y="121" text-anchor="middle">μ<tspan font-size="9" dy="3">t</tspan></text>
+  <path class="edgeA" d="M966,46 L1066,46 L1066,94"/>
+  <text class="lbl" x="1012" y="40" text-anchor="middle">σ = e<tspan font-size="9" dy="-6">log σ</tspan></text>
+
+  <rect class="act" x="1001" y="96" width="130" height="66" rx="8"/>
+  <text class="title" x="1066" y="118" fill="#1d4f86">𝒩(μ<tspan font-size="10" dy="3">t</tspan><tspan dy="-3">, σ)</tspan></text>
+  <text class="small" x="1066" y="137">sampled in training</text><text class="small" x="1066" y="152">μ used in eval</text>
+
+  <path class="edgeA" d="M1066,162 L1066,186"/>
+  <text class="lbl" x="1073" y="179">a<tspan font-size="9" dy="3">t</tspan></text>
+
+  <rect class="box" x="1005" y="188" width="122" height="56" rx="8"/>
+  <text class="txt" x="1066" y="210">× u_max (8)</text>
+  <text class="txt" x="1066" y="229">clip ±8</text>
+
+  <path class="edge" d="M1066,244 L1066,272"/>
+  <text class="txt" x="1066" y="290">force u<tspan font-size="10" dy="3">t</tspan><tspan dy="-3"> → plant</tspan></text>
+
+  <!-- ===== Critic ===== -->
+  <rect class="crit" x="840" y="320" width="126" height="56" rx="8"/>
+  <text class="title" x="903" y="343" fill="#8a5a12">critic</text>
+  <text class="txt" x="903" y="363">Linear 128 → 1</text>
+  <path class="edgeC" d="M966,348 L994,348"/>
+  <text class="txt" x="1024" y="353">V(s<tspan font-size="10" dy="3">t</tspan><tspan dy="-3">)</tspan></text>
+
+  <!-- ===== Footnote ===== -->
+  <line x1="20" y1="408" x2="1140" y2="408" stroke="#d0d4da" stroke-width="1"/>
+  <text class="small left" x="20" y="430">118,019 parameters. Head sizes: actor 129, critic 129, log σ 1 (learned, state-independent, initialised at −0.5). Normalisation uses running statistics, not learned weights.</text>
+  <text class="small left" x="20" y="450">Init (CleanRL): orthogonal; trunk gain √2, GRU gain 1, actor mean gain 0.01, critic gain 1; all biases 0. Hidden state zeroed at episode boundaries.</text>
+</svg>
